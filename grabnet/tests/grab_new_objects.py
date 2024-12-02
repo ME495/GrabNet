@@ -86,7 +86,9 @@ def vis_results(dorig, coarse_net, refine_net, rh_model , save=False, save_dir =
                 save_path = os.path.join(save_dir, str(cId))
                 makepath(save_path)
                 hand_mesh_gen_rnet.write_ply(filename=save_path + '/rh_mesh_gen_%d.ply' % cId)
-                obj_mesh[0].write_ply(filename=save_path + '/obj_mesh_%d.ply' % cId)
+                obj_mesh.write_ply(filename=save_path + '/obj_mesh_%d.ply' % cId)
+                hand_mesh_gen_rnet.write_obj(filename=save_path + '/rh_mesh_gen_%d.obj' % cId)
+                obj_mesh.write_obj(filename=save_path + '/obj_mesh_%d.obj' % cId)
 
 
 def grab_new_objs(grabnet, objs_path, rot=True, n_samples=10, scale=1.):
@@ -138,6 +140,7 @@ def grab_new_objs(grabnet, objs_path, rot=True, n_samples=10, scale=1.):
         dorig['verts_object'] = torch.cat(dorig['verts_object'])
 
         save_dir = os.path.join(grabnet.cfg.work_dir, 'grab_new_objects')
+        print(save_dir)
         grabnet.logger(f'#################\n'
                               f'                   \n'
                               f'Showing results for the {obj_name.upper()}'
@@ -147,7 +150,7 @@ def grab_new_objs(grabnet, objs_path, rot=True, n_samples=10, scale=1.):
                     coarse_net=grabnet.coarse_net,
                     refine_net=grabnet.refine_net,
                     rh_model=rh_model,
-                    save=False,
+                    save=True,
                     save_dir=save_dir
                     )
 
@@ -164,7 +167,7 @@ def load_obj_verts(mesh_path, rand_rotmat, rndrotate=True, scale=1., n_sample_ve
     if  max_length > .3:
         re_scale = max_length/.08
         print(f'The object is very large, down-scaling by {re_scale} factor')
-        obj_mesh.v = obj_mesh.v/re_scale
+        # obj_mesh.v = obj_mesh.v/re_scale
 
     object_fullpts = obj_mesh.v
     maximum = object_fullpts.max(0, keepdims=True)
@@ -232,4 +235,4 @@ if __name__ == '__main__':
     cfg = Config(default_cfg_path=cfg_path, **config)
 
     grabnet = Tester(cfg=cfg)
-    grab_new_objs(grabnet,obj_path, rot=True, n_samples=10)
+    grab_new_objs(grabnet,obj_path, rot=True, n_samples=10, scale=0.001)

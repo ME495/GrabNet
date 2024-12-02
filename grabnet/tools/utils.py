@@ -1,23 +1,10 @@
-
-# -*- coding: utf-8 -*-
-#
-# Copyright (C) 2019 Max-Planck-Gesellschaft zur Förderung der Wissenschaften e.V. (MPG),
-# acting on behalf of its Max Planck Institute for Intelligent Systems and the
-# Max Planck Institute for Biological Cybernetics. All rights reserved.
-#
-# Max-Planck-Gesellschaft zur Förderung der Wissenschaften e.V. (MPG) is holder of all proprietary rights
-# on this computer program. You can only use this computer program if you have closed a license agreement
-# with MPG or you get the right to use the computer program from someone who is authorized to grant you that right.
-# Any use of the computer program without a valid license is prohibited and liable to prosecution.
-# Contact: ps-license@tuebingen.mpg.de
-#
-
-
 import numpy as np
 import torch
 import logging
-
+import sys
+import math
 import torch.nn.functional as F
+import os
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -383,3 +370,187 @@ def quaternion_to_angle_axis(quaternion: torch.Tensor) -> torch.Tensor:
     angle_axis[..., 1] += q2 * k
     angle_axis[..., 2] += q3 * k
     return angle_axis
+
+def project_3D_points(cam_mat, extrinsics, pts3D, global_trans, use_ext=True):
+    '''
+    Function for projecting 3d points to 2d
+    :param camMat: camera matrix
+    :param pts3D: 3D points
+    :param isOpenGLCoords: If True, hand/object along negative z-axis. If False hand/object along positive z-axis
+    :return:
+    '''
+    if not isinstance(pts3D, np.ndarray):
+        pts3D = pts3D.squeeze(0).cpu().numpy()
+    else:
+        pts3D = pts3D.squeeze(axis=0)
+    assert pts3D.shape[-1] == 3
+    assert len(pts3D.shape) == 2
+    if not use_ext:
+        pts3D += global_trans
+
+    ex_rot = extrinsics[:3,:3]
+    ex_tr = extrinsics[:3,-1]
+    # assert np.all(ex_tr == np.array([0,0,0]))
+    pts3D = pts3D.dot(ex_rot.T)
+
+    proj_pts = ((pts3D + ex_tr)*1000).dot(cam_mat.T)
+    proj_pts = np.stack([proj_pts[:,0]/proj_pts[:,2], proj_pts[:,1]/proj_pts[:,2]],axis=1)
+
+    assert len(proj_pts.shape) == 2
+
+    return proj_pts
+
+def project_3D_points_no_cat(cam_mat, extrinsics, pts3D, is_OpenGL_coords=True):
+    '''
+    Function for projecting 3d points to 2d
+    :param camMat: camera matrix
+    :param pts3D: 3D points
+    :param isOpenGLCoords: If True, hand/object along negative z-axis. If False hand/object along positive z-axis
+    :return:
+    '''
+    if not isinstance(pts3D, np.ndarray):
+        pts3D = pts3D.squeeze(0).cpu().numpy()
+    else:
+        pts3D = pts3D.squeeze(axis=0)
+    assert pts3D.shape[-1] == 3
+    assert len(pts3D.shape) == 2
+
+    ex_rot = extrinsics[:3,:3]
+    ex_tr = extrinsics[:3,-1]
+    pts3D = pts3D.dot(ex_rot.T)
+
+    proj_pts = ((pts3D + ex_tr)*1000).dot(cam_mat.T)
+    proj_pts = np.stack([proj_pts[:,0]/proj_pts[:,2], proj_pts[:,1]/proj_pts[:,2]],axis=1)
+
+    assert len(proj_pts.shape) == 2
+
+    return proj_pts
+
+def showHandJoints(imgInOrg, gtIn, filename=None):
+    '''
+    Utility function for displaying hand annotations
+    :param imgIn: image on which annotation is shown
+    :param gtIn: ground truth annotation
+    :param filename: dump image name
+    :return:
+    '''
+    import cv2
+
+    imgIn = np.zeros_like(imgInOrg)
+
+    # Set color for each finger
+    joint_color_code = [[139, 53, 255],
+                        [0, 56, 255],
+                        [43, 140, 237],
+                        [37, 168, 36],
+                        [147, 147, 0],
+                        [70, 17, 145]]
+
+    limbs = [[0, 1],
+             [1, 2],
+             [2, 3],
+             [3, 4],
+             [0, 5],
+             [5, 6],
+             [6, 7],
+             [7, 8],
+             [0, 9],
+             [9, 10],
+             [10, 11],
+             [11, 12],
+             [0, 13],
+             [13, 14],
+             [14, 15],
+             [15, 16],
+             [0, 17],
+             [17, 18],
+             [18, 19],
+             [19, 20]
+             ]
+
+    PYTHON_VERSION = sys.version_info[0]
+
+    gtIn = np.round(gtIn).astype(np.int)
+
+    if gtIn.shape[0]==1:
+        imgIn = cv2.circle(imgIn, center=(gtIn[0][0], gtIn[0][1]), radius=3, color=joint_color_code[0],
+                             thickness=-1)
+    else:
+
+        for joint_num in range(gtIn.shape[0]):
+
+            color_code_num = (joint_num // 4)
+            if joint_num in [0, 4, 8, 12, 16]:
+                if PYTHON_VERSION == 3:
+                    joint_color = list(map(lambda x: x + 35 * (joint_num % 4), joint_color_code[color_code_num]))
+                else:
+                    joint_color = map(lambda x: x + 35 * (joint_num % 4), joint_color_code[color_code_num])
+
+                cv2.circle(imgIn, center=(gtIn[joint_num][0], gtIn[joint_num][1]), radius=3, color=joint_color, thickness=-1)
+            else:
+                if PYTHON_VERSION == 3:
+                    joint_color = list(map(lambda x: x + 35 * (joint_num % 4), joint_color_code[color_code_num]))
+                else:
+                    joint_color = map(lambda x: x + 35 * (joint_num % 4), joint_color_code[color_code_num])
+
+                cv2.circle(imgIn, center=(gtIn[joint_num][0], gtIn[joint_num][1]), radius=3, color=joint_color, thickness=-1)
+
+        for limb_num in range(len(limbs)):
+
+            x1 = gtIn[limbs[limb_num][0], 1]
+            y1 = gtIn[limbs[limb_num][0], 0]
+            x2 = gtIn[limbs[limb_num][1], 1]
+            y2 = gtIn[limbs[limb_num][1], 0]
+            length = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+            if length < 150 and length > 5:
+                deg = math.degrees(math.atan2(x1 - x2, y1 - y2))
+                polygon = cv2.ellipse2Poly((int((y1 + y2) / 2), int((x1 + x2) / 2)),
+                                           (int(length / 2), 3),
+                                           int(deg),
+                                           0, 360, 1)
+                color_code_num = limb_num // 4
+                if PYTHON_VERSION == 3:
+                    limb_color = list(map(lambda x: x + 35 * (limb_num % 4), joint_color_code[color_code_num]))
+                else:
+                    limb_color = map(lambda x: x + 35 * (limb_num % 4), joint_color_code[color_code_num])
+
+                cv2.fillConvexPoly(imgIn, polygon, color=limb_color)
+
+
+    if filename is not None:
+        cv2.imwrite(filename, imgIn)
+
+    return imgIn
+
+def getObjPath(obj_path, obj_cat=''):
+    input_obj_path = []
+    for path in obj_path:
+        all_objs = os.listdir(path)
+        for obj in all_objs:
+            if obj in ['006_mustard_bottle', '021_bleach_cleanser', '025_mug', '035_power_drill', '037_scissors', '040_large_marker']:
+                continue
+            if obj_cat != '':
+                if obj_cat not in obj: continue
+            obj_model_path = os.path.join(path, obj, "align")
+            if not os.path.exists(obj_model_path): continue
+            obj_files = os.listdir(obj_model_path)
+            for file in obj_files:
+                if file[-3:] == "obj" or file[-3:] == "ply":
+                    if 'Virtual' in path and "scale" in file: continue
+                    input_obj_path.append(os.path.join(obj_model_path, file))
+    return input_obj_path
+
+def getObjPath_no_cat(obj_path):
+    input_obj_path = []
+    for path in obj_path:
+        all_objs = os.listdir(path)
+        for obj in all_objs:
+            if obj in ['006_mustard_bottle', '021_bleach_cleanser', '025_mug', '035_power_drill', '037_scissors', '040_large_marker']:
+                continue
+            obj_model_path = os.path.join(path, obj, "align")
+            if not os.path.exists(obj_model_path): continue
+            obj_files = os.listdir(obj_model_path)
+            for file in obj_files:
+                if file[-3:] == "obj" or file[-3:] == "ply":
+                    input_obj_path.append(os.path.join(obj_model_path, file))
+    return input_obj_path
